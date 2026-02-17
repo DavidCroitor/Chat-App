@@ -70,4 +70,46 @@ public class ChatRoomRepository : IChatRoomRepository
             .ToListAsync();
     }
 
+    public async Task<Dictionary<Guid, int>> GetUnreadCountsAsync(Guid userId)
+    {
+        // Get all read receipts for this user
+        var receipts = await _context.ReadReceipts
+            .Where(r => r.UserId == userId)
+            .ToDictionaryAsync(r => r.ChatRoomId, r => r.LastReadAt);
+
+        // Get rooms for the user
+        var roomIds = await _context.ChatRooms
+            .Where(r => r.ParticipantIds.Contains(userId))
+            .Select(r => r.Id)
+            .ToListAsync();
+
+        var counts = new Dictionary<Guid, int>();
+        foreach (var roomId in roomIds)
+        {
+            var query = _context.Messages.Where(m => m.ChatRoomId == roomId && m.SenderId != userId);
+            if (receipts.TryGetValue(roomId, out var lastRead))
+            {
+                query = query.Where(m => m.CreatedAt > lastRead);
+            }
+            counts[roomId] = await query.CountAsync();
+        }
+
+        return counts;
+    }
+
+    public async Task UpsertReadReceiptAsync(Guid userId, Guid roomId, DateTime readAt)
+    {
+        var receipt = await _context.ReadReceipts
+            .FirstOrDefaultAsync(r => r.UserId == userId && r.ChatRoomId == roomId);
+
+        if (receipt != null)
+        {
+            receipt.UpdateLastReadAt(readAt);
+        }
+        else
+        {
+            _context.ReadReceipts.Add(new ReadReceipt(userId, roomId, readAt));
+        }
+    }
+
 }

@@ -27,6 +27,7 @@ public class GetUserRoomsHandler : IRequestHandler<GetUserRoomsQuery, List<ChatR
         var userId = _currentUser.UserId ?? throw new UnauthorizedAccessException();
 
         var rooms = await _roomRepository.GetRoomsForUserAsync(userId);
+        var unreadCounts = await _roomRepository.GetUnreadCountsAsync(userId);
 
         var roomDtos = new List<ChatRoomDto>();
 
@@ -34,6 +35,7 @@ public class GetUserRoomsHandler : IRequestHandler<GetUserRoomsQuery, List<ChatR
         {
             var participants = await _userRepository.GetByIdsAsync(room.ParticipantIds);
             var participantDtos = participants.Select(u => new ParticipantDto(u.Id, u.Username)).ToList();
+            unreadCounts.TryGetValue(room.Id, out var unread);
 
             roomDtos.Add(new ChatRoomDto(
                 room.Id,
@@ -42,7 +44,8 @@ public class GetUserRoomsHandler : IRequestHandler<GetUserRoomsQuery, List<ChatR
                 room.ParticipantIds.ToList(),
                 participantDtos,
                 room.CreatedAt,
-                room.CreatorId
+                room.CreatorId,
+                unread
             ));
         }
 

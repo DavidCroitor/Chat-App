@@ -12,6 +12,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<ChatRoom> ChatRooms => Set<ChatRoom>();
     public DbSet<Message> Messages => Set<Message>();
+    public DbSet<ReadReceipt> ReadReceipts => Set<ReadReceipt>();
     public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options, IPublisher publisher) : base(options)
     {
          _publisher = publisher;

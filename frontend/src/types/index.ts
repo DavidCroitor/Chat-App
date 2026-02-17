@@ -26,6 +26,7 @@ export interface ChatRoom {
     participants: Participant[];
     createdAt: string;
     creatorId: string | null;
+    unreadCount: number;
 }
 
 export interface ChatHistory {

@@ -37,6 +37,10 @@ public static class ChatEndpoints
         // Admin: Add user to room
         group.MapPost("/rooms/{roomId:guid}/users", async (Guid roomId, AddUserToRoomRequest request, ISender mediator) =>
             Results.Ok(await mediator.Send(new AddUserToRoomCommand(roomId, request.UserId))));
+
+        // Mark room as read
+        group.MapPost("/rooms/{roomId:guid}/read", async (Guid roomId, ISender mediator) =>
+            Results.Ok(await mediator.Send(new MarkRoomAsReadCommand(roomId))));
     }
 }
 

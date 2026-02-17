@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useChatStore } from '../store/useChatStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { chat, getErrorMessage } from '../lib/api';
@@ -9,11 +9,13 @@ import toast from 'react-hot-toast';
 
 export const ChatArea = () => {
     const { activeRoom, messages, setMessages, addMessage } = useChatStore();
+    const { setOnlineUsers, addOnlineUser, removeOnlineUser, incrementUnreadCount, resetUnreadCount } = useChatStore();
     const { user } = useAuthStore();
     const [newMessage, setNewMessage] = useState('');
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const previousRoomIdRef = useRef<string | null>(null);
+    const activeRoomRef = useRef<typeof activeRoom>(null);
+    const userRef = useRef<typeof user>(null);
 
     // Add user modal state
     const [showAddUserModal, setShowAddUserModal] = useState(false);
@@ -22,7 +24,21 @@ export const ChatArea = () => {
     const [isSearching, setIsSearching] = useState(false);
     const [isAddingUser, setIsAddingUser] = useState(false);
 
+    // Typing indicator state
+    const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+    const typingTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+    const lastTypingSentRef = useRef<number>(0);
+
     const isAdmin = activeRoom && !activeRoom.isPrivate && activeRoom.creatorId === user?.id;
+
+    // Keep refs in sync with current values
+    useEffect(() => {
+        activeRoomRef.current = activeRoom;
+    }, [activeRoom]);
+
+    useEffect(() => {
+        userRef.current = user;
+    }, [user]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -32,21 +48,96 @@ export const ChatArea = () => {
         scrollToBottom();
     }, [messages]);
 
-    // Connect to SignalR
+    // Connect to SignalR - only set up once
     useEffect(() => {
-        chatHub.start();
+        let mounted = true;
 
-        const handleReceiveMessage = (message: Message) => {
-            console.log('Received message:', message);
-            addMessage(message);
+        const init = async () => {
+            try {
+                await chatHub.start();
+                if (!mounted) return;
+                
+                console.log('[ChatArea] SignalR connected');
+                // Fetch initial online users
+                const onlineIds = await chatHub.getOnlineUsers();
+                if (!mounted) return;
+                
+                useChatStore.getState().setOnlineUsers(onlineIds);
+                console.log('[ChatArea] Initial online users:', onlineIds);
+            } catch (error) {
+                console.error('[ChatArea] Failed to initialize SignalR:', error);
+            }
+        };
+        init();
+
+        const handleReceiveMessage = (message: Message, roomId: string) => {
+            console.log('[ChatArea] Received message:', message, 'for room:', roomId, 'activeRoom:', activeRoomRef.current?.id);
+            // If message is for the active room, add it to the messages
+            if (activeRoomRef.current?.id === roomId) {
+                console.log('[ChatArea] Adding message to active room');
+                useChatStore.getState().addMessage(message);
+            } else {
+                // Message is for a different room - increment unread count
+                // Only increment if the message is not from the current user
+                if (message.senderId !== userRef.current?.id) {
+                    console.log('[ChatArea] Incrementing unread count for room:', roomId);
+                    useChatStore.getState().incrementUnreadCount(roomId);
+                }
+            }
+        };
+
+        const handleUserTyping = (roomId: string, username: string) => {
+            if (roomId !== activeRoomRef.current?.id) return;
+            setTypingUsers(prev => new Set(prev).add(username));
+
+            // Clear previous timeout for this user
+            const existing = typingTimeoutsRef.current.get(username);
+            if (existing) clearTimeout(existing);
+
+            // Auto-clear after 2 seconds
+            const timeout = setTimeout(() => {
+                setTypingUsers(prev => {
+                    const next = new Set(prev);
+                    next.delete(username);
+                    return next;
+                });
+                typingTimeoutsRef.current.delete(username);
+            }, 2000);
+            typingTimeoutsRef.current.set(username, timeout);
+        };
+
+        const handleUserOnline = (userId: string) => {
+            console.log('[ChatArea] User online:', userId);
+            useChatStore.getState().addOnlineUser(userId);
+        };
+        const handleUserOffline = (userId: string) => {
+            console.log('[ChatArea] User offline:', userId);
+            useChatStore.getState().removeOnlineUser(userId);
         };
 
         chatHub.onMessageReceived(handleReceiveMessage);
+        chatHub.onUserTyping(handleUserTyping);
+        chatHub.onUserOnline(handleUserOnline);
+        chatHub.onUserOffline(handleUserOffline);
+
+        console.log('[ChatArea] All SignalR handlers registered');
 
         return () => {
+            mounted = false;
+            console.log('[ChatArea] Cleaning up SignalR handlers');
             chatHub.offMessageReceived(handleReceiveMessage);
+            chatHub.offUserTyping(handleUserTyping);
+            chatHub.offUserOnline(handleUserOnline);
+            chatHub.offUserOffline(handleUserOffline);
         };
     }, []);
+
+    // Clear typing indicators when switching rooms
+    useEffect(() => {
+        setTypingUsers(new Set());
+        typingTimeoutsRef.current.forEach(t => clearTimeout(t));
+        typingTimeoutsRef.current.clear();
+    }, [activeRoom?.id]);
 
     // Fetch history when activeRoom changes
     useEffect(() => {
@@ -55,20 +146,15 @@ export const ChatArea = () => {
         const fetchHistory = async () => {
             setIsLoadingHistory(true);
             try {
-                // Leave the previous room's SignalR group
-                if (previousRoomIdRef.current && previousRoomIdRef.current !== activeRoom.id) {
-                    await chatHub.leaveRoom(previousRoomIdRef.current);
-                }
-
                 const response = await chat.getHistory(activeRoom.id);
                 const sortedMessages = response.data.messages.sort((a, b) =>
                     new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
                 );
                 setMessages(sortedMessages);
 
-                // Join the SignalR group for this room
-                await chatHub.joinRoom(activeRoom.id);
-                previousRoomIdRef.current = activeRoom.id;
+                // Mark room as read and reset unread count
+                resetUnreadCount(activeRoom.id);
+                chat.markRoomAsRead(activeRoom.id).catch(() => { });
             } catch (error) {
                 console.error('Failed to fetch history', error);
                 toast.error(getErrorMessage(error, 'Could not load chat history'));
@@ -80,6 +166,16 @@ export const ChatArea = () => {
         fetchHistory();
 
     }, [activeRoom, setMessages]);
+
+    // Debounced typing event sender
+    const handleTyping = useCallback(() => {
+        if (!activeRoom || !user) return;
+        const now = Date.now();
+        if (now - lastTypingSentRef.current > 1000) {
+            lastTypingSentRef.current = now;
+            chatHub.sendTyping(activeRoom.id, user.username);
+        }
+    }, [activeRoom, user]);
 
 
     const handleSendMessage = async (e: React.FormEvent) => {
@@ -282,12 +378,18 @@ export const ChatArea = () => {
                 <div ref={messagesEndRef} />
             </div>
 
+            {typingUsers.size > 0 && (
+                <div className="px-4 py-1 text-xs text-gray-500 italic bg-gray-50 border-t border-gray-100">
+                    {Array.from(typingUsers).join(', ')} {typingUsers.size === 1 ? 'is' : 'are'} typing…
+                </div>
+            )}
+
             <div className="p-4 bg-white border-t border-gray-200 w-full">
                 <form onSubmit={handleSendMessage} className="flex items-center space-x-2">
                     <input
                         type="text"
                         value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
+                        onChange={(e) => { setNewMessage(e.target.value); handleTyping(); }}
                         placeholder="Type a message..."
                         className="flex-1 border border-gray-300 rounded-full px-4 py-2 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-shadow text-gray-900"
                     />

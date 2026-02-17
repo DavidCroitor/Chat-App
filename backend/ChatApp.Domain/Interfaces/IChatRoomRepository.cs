@@ -20,4 +20,8 @@ public interface IChatRoomRepository
 
     // For validation
     Task<bool> ExistsAsync(Guid roomId);
+
+    // Unread counts
+    Task<Dictionary<Guid, int>> GetUnreadCountsAsync(Guid userId);
+    Task UpsertReadReceiptAsync(Guid userId, Guid roomId, DateTime readAt);
 }

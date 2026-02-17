@@ -7,5 +7,6 @@ public record ChatRoomDto(
     List<Guid> ParticipantIds,
     List<ParticipantDto> Participants,
     DateTime CreatedAt,
-    Guid? CreatorId = null
+    Guid? CreatorId = null,
+    int UnreadCount = 0
 );

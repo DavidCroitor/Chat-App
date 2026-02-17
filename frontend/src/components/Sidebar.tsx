@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useChatStore } from '../store/useChatStore';
 import { chat, getErrorMessage } from '../lib/api';
+import { chatHub } from '../lib/signalr';
 import { LogOut, Plus, Search, MessageSquare, Users, Shield, X } from 'lucide-react';
 import type { SearchUser } from '../types';
 import toast from 'react-hot-toast';
@@ -9,6 +10,7 @@ import toast from 'react-hot-toast';
 export const Sidebar = () => {
     const { logout, user } = useAuthStore();
     const { rooms, setActiveRoom, activeRoom, addRoom } = useChatStore();
+    const onlineUserIds = useChatStore(state => state.onlineUserIds);
     const [view, setView] = useState<'chats' | 'search'>('chats');
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
@@ -17,16 +19,36 @@ export const Sidebar = () => {
     const [groupName, setGroupName] = useState('');
 
     useEffect(() => {
+        let mounted = true;
+
         const fetchRooms = async () => {
             try {
+                // Wait for SignalR connection to be ready
+                await chatHub.start();
+                if (!mounted) return;
+                
                 const response = await chat.getRooms();
-                useChatStore.getState().setRooms(response.data);
+                if (!mounted) return;
+                
+                const roomsData = response.data;
+                useChatStore.getState().setRooms(roomsData);
+                console.log('[Sidebar] Fetched and joined', roomsData.length, 'rooms');
+                
+                // Join all room groups for real-time updates
+                for (const room of roomsData) {
+                    if (!mounted) return;
+                    await chatHub.joinRoom(room.id);
+                }
             } catch (error) {
                 console.error('Failed to fetch rooms', error);
             }
         };
 
         fetchRooms();
+
+        return () => {
+            mounted = false;
+        };
     }, []);
 
     const handleSearch = async () => {
@@ -48,6 +70,8 @@ export const Sidebar = () => {
             const room = response.data;
             if (!rooms.find(r => r.id === room.id)) {
                 addRoom(room);
+                // Join the new room's SignalR group
+                await chatHub.joinRoom(room.id);
             }
             setActiveRoom(room);
             setView('chats');
@@ -65,6 +89,8 @@ export const Sidebar = () => {
             const room = response.data;
             if (!rooms.find(r => r.id === room.id)) {
                 addRoom(room);
+                // Join the new room's SignalR group
+                await chatHub.joinRoom(room.id);
             }
             setActiveRoom(room);
             setShowCreateGroup(false);
@@ -83,6 +109,17 @@ export const Sidebar = () => {
 
     const isGroupAdmin = (room: any, currentUserId: string | undefined) => {
         return !room.isPrivate && room.creatorId && room.creatorId === currentUserId;
+    };
+
+    const isOtherUserOnline = (room: any, currentUserId: string | undefined) => {
+        if (!room.isPrivate) return false;
+        const otherParticipant = room.participants?.find((p: any) => p.id !== currentUserId);
+        return otherParticipant ? onlineUserIds.has(otherParticipant.id) : false;
+    };
+
+    const getOnlineCount = (room: any) => {
+        if (room.isPrivate) return 0;
+        return room.participantIds?.filter((id: string) => onlineUserIds.has(id)).length ?? 0;
     };
 
     return (
@@ -157,20 +194,33 @@ export const Sidebar = () => {
                                     onClick={() => setActiveRoom(room)}
                                     className={`p-3 rounded-lg cursor-pointer flex items-center space-x-3 transition-colors ${activeRoom?.id === room.id ? 'bg-blue-50 border-l-4 border-blue-500' : 'hover:bg-gray-50'}`}
                                 >
-                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${room.isPrivate ? 'bg-gray-200 text-gray-600' : 'bg-green-100 text-green-600'}`}>
+                                    <div className={`relative w-10 h-10 rounded-full flex items-center justify-center ${room.isPrivate ? 'bg-gray-200 text-gray-600' : 'bg-green-100 text-green-600'}`}>
                                         {room.isPrivate ? <Users size={20} /> : <Users size={20} />}
+                                        {room.isPrivate && (
+                                            <span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${isOtherUserOnline(room, user?.id) ? 'bg-green-500' : 'bg-gray-400'}`} />
+                                        )}
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center space-x-1">
                                             <p className="font-medium text-gray-800 truncate">{getRoomName(room, user?.id)}</p>
                                             {isGroupAdmin(room, user?.id) && (
-                                                <Shield size={14} className="text-amber-500 flex-shrink-0" title="Admin" />
+                                                <span title="Admin">
+                                                    <Shield size={14} className="text-amber-500 flex-shrink-0" />
+                                                </span>
                                             )}
                                         </div>
                                         <p className="text-xs text-gray-500">
-                                            {room.isPrivate ? 'Private' : `Group · ${room.participantIds?.length ?? 0} members`}
+                                            {room.isPrivate
+                                                ? (isOtherUserOnline(room, user?.id) ? 'Online' : 'Offline')
+                                                : `Group · ${room.participantIds?.length ?? 0} members${getOnlineCount(room) > 0 ? ` · ${getOnlineCount(room)} online` : ''}`
+                                            }
                                         </p>
                                     </div>
+                                    {room.unreadCount > 0 && (
+                                        <span className="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-full min-w-[1.25rem] text-center">
+                                            {room.unreadCount > 99 ? '99+' : room.unreadCount}
+                                        </span>
+                                    )}
                                 </div>
                             ))
                         )}

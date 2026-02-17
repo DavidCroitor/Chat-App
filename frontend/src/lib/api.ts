@@ -68,6 +68,9 @@ export const chat = {
 
     // Admin: Add user to room
     addUserToRoom: (roomId: string, userId: string) => api.post<void>(`/chat/rooms/${roomId}/users`, { userId }),
+
+    // Read receipts
+    markRoomAsRead: (roomId: string) => api.post<void>(`/chat/rooms/${roomId}/read`),
 };
 
 export default api;

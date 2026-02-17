@@ -14,6 +14,6 @@ public class ChatNotificationService : IChatNotificationService
     public async Task NotifyNewMessage(Guid roomId, MessageDto message)
     {
         await _hubContext.Clients.Group(roomId.ToString())
-            .SendAsync("ReceiveMessage", message);
+            .SendAsync("ReceiveMessage", message, roomId.ToString());
     }
 }
