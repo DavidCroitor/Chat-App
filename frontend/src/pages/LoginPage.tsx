@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { auth, getErrorMessage } from '../lib/api';
 import { useAuthStore } from '../store/useAuthStore';
+import { chatHub } from '../lib/signalr';
 import toast from 'react-hot-toast';
 import { MessageSquare } from 'lucide-react';
 
@@ -16,6 +17,8 @@ export const LoginPage = () => {
         try {
             const response = await auth.login({ email, password });
             setAuth(response.data, response.data.token);
+            // Reconnect SignalR with the new token
+            await chatHub.reconnect();
             toast.success('Logged in successfully');
             navigate('/');
         } catch (error: any) {

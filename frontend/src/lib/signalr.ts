@@ -47,8 +47,16 @@ export class ChatHub {
         return this.connectionPromise;
     }
 
-    public stop() {
-        this.connection.stop();
+    public async stop() {
+        await this.connection.stop();
+        this.joinedRooms.clear();
+        this.connectionPromise = null;
+    }
+
+    public async reconnect() {
+        console.log('[SignalR] Reconnecting...');
+        await this.stop();
+        await this.start();
     }
 
     public async joinRoom(roomId: string) {

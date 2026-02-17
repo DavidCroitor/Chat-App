@@ -59,7 +59,7 @@ export const chat = {
     joinRoom: (roomId: string) => api.post<void>('/chat/rooms/join', { roomId }),
 
     // Messages
-    sendMessage: (roomId: string, text: string) => api.post<Message>(`/chat/rooms/${roomId}/messages`, { text }),
+    sendMessage: (roomId: string, Text: string) => api.post<Message>(`/chat/rooms/${roomId}/messages`, { Text }),
     getHistory: (roomId: string) => api.get<ChatHistory>(`/chat/rooms/${roomId}/history`),
 
     // Users
