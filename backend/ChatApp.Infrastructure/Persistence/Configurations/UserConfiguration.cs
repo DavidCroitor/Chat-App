@@ -11,7 +11,6 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
     {
         builder.HasKey(u => u.Id);
 
-        // FIX: Use ONLY HasConversion. Remove OwnsOne entirely.
         builder.Property(u => u.Email)
             .HasConversion(
                 email => email.Value,             // To string for DB
